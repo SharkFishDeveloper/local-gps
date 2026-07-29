@@ -1,0 +1,68 @@
+# --- Node.js ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+yarn.lock
+package-lock.json
+
+# --- Java ---
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+target/
+build/
+dist/
+*.log
+hs_err_pid*
+replay_pid*
+
+# --- IDE / Editor ---
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.vscode/
+.settings/
+.project
+.classpath
+*.sublime-project
+*.sublime-workspace
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Env / Secrets ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# --- Logs / Temp ---
+*.log
+tmp/
+temp/
+*.tmp
+
+# --- Misc large / generated ---
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+coverage/
+.nyc_output/

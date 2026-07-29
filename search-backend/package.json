@@ -1,0 +1,21 @@
+{
+  "name": "search-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "build-db": "node build-db.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "",
+  "dependencies": {
+    "better-sqlite3": "^13.0.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "osm-pbf-parser": "^2.3.0",
+    "osm-read": "^0.7.0"
+  }
+}
