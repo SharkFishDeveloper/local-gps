@@ -13,7 +13,7 @@ const FROM_MARKER_COLOR = "#22c55e"; // green
 const TO_MARKER_COLOR = "#ef4444"; // red
 const ROUTE_LINE_COLOR = "#3b82f6"; // blue
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "http://127.0.0.1:8002";
 const ROUTE_SOURCE_ID = "route-source";
 const ROUTE_LAYER_ID = "route-layer";
 

@@ -1,6 +1,8 @@
 
 /data
 
+.venv
+__pycache
 # --- Node.js ---
 node_modules/
 npm-debug.log*
