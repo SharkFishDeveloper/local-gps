@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import LocationSearchBox from "./LocationSearchBox.tsx";
 import { SearchResult } from "@/hooks/useLocationSearch";
+import VALHALLA_BACKENDAPI from "@/util/valhalla-backendurl.js";
 
 type Point = { lat: number; lon: number; label: string };
 type PickTarget = "from" | "to" | null;
@@ -13,13 +14,21 @@ const FROM_MARKER_COLOR = "#22c55e"; // green
 const TO_MARKER_COLOR = "#ef4444"; // red
 const ROUTE_LINE_COLOR = "#3b82f6"; // blue
 
-const API_BASE = "http://127.0.0.1:8002";
+const API_BASE = VALHALLA_BACKENDAPI;
 const ROUTE_SOURCE_ID = "route-source";
 const ROUTE_LAYER_ID = "route-layer";
 
 type RouteSummary = {
   distanceKm: number;
   durationMin: number;
+};
+
+type TravelMode = "auto" | "bicycle" | "pedestrian";
+
+const MODE_LABELS: Record<TravelMode, string> = {
+  auto: "Car",
+  bicycle: "Bike",
+  pedestrian: "Foot",
 };
 
 // Valhalla encodes route shapes using Google's polyline algorithm at
@@ -75,6 +84,7 @@ export default function Map() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
 
+  const [mode, setMode] = useState<TravelMode>("auto");
   // Initialize map once
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -202,7 +212,7 @@ export default function Map() {
               { lat: from.lat, lon: from.lon },
               { lat: to.lat, lon: to.lon },
             ],
-            costing: "auto",
+            costing: mode,
             units: "kilometers",
           }),
         });
@@ -258,7 +268,7 @@ export default function Map() {
     } else {
       map.once("load", fetchRoute);
     }
-  }, [from, to]);
+  }, [from, to, mode]);
 
   const handleFromSelect = (result: SearchResult) =>
     setFrom({ lat: result.lat, lon: result.lon, label: result.name });
@@ -305,6 +315,22 @@ export default function Map() {
           isPicking={picking === "to"}
           externalValue={to?.label}
         />
+        <div className="flex gap-1 rounded-md bg-gray-100 p-1">
+          {(Object.keys(MODE_LABELS) as TravelMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                mode === m
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
         {picking && (
           <p className="text-xs text-blue-600">
             Click anywhere on the map to set the {picking === "from" ? "From" : "To"} location.

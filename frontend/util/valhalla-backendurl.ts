@@ -1,0 +1,2 @@
+const VALHALLA_BACKENDAPI = "http://127.0.0.1:8002"
+export default VALHALLA_BACKENDAPI;
