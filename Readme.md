@@ -131,6 +131,8 @@ npm run dev
 
 Now go to http://localhost:3000 to show the UI -->
 
+![alt text](image.png)
+
 # Local Setup
 
 ## Prerequisites
@@ -321,3 +323,5 @@ npm run dev
 | Valhalla Routing API | http://127.0.0.1:8002 |
 
 Once all the services are running, open **http://localhost:3000** in your browser.
+
+![alt text](image.png)
