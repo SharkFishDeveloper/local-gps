@@ -184,8 +184,8 @@ class ServiceManagerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Service Manager")
-        self.root.geometry("800x550")
-        self.root.minsize(700, 480)
+        self.root.geometry("820x550")
+        self.root.minsize(720, 480)
 
         self.jobs = {}
         self.display_pids = {}
@@ -225,7 +225,7 @@ class ServiceManagerGUI:
             self.status_vars[key] = status_var
 
             ttk.Label(table, text=svc["name"], width=25, font=("Segoe UI", 10)).grid(row=i, column=0, sticky="w", padx=10, pady=5)
-            status_lbl = ttk.Label(table, textvariable=status_var, width=12, foreground="red", font=("Segoe UI", 10, "bold"))
+            status_lbl = ttk.Label(table, textvariable=status_var, width=18, foreground="red", font=("Segoe UI", 10, "bold"))
             status_lbl.grid(row=i, column=1, sticky="w", padx=10, pady=5)
 
             ttk.Button(table, text="Restart", width=10, command=lambda k=key: self.restart_service(k)).grid(row=i, column=2, padx=10)
@@ -247,8 +247,8 @@ class ServiceManagerGUI:
     def _log(self, msg):
         self.ui_queue.put(("log", msg))
 
-    def _set_status(self, key, running):
-        self.ui_queue.put(("status", (key, running)))
+    def _set_status_ui(self, key, text, color):
+        self.ui_queue.put(("status", (key, text, color)))
 
     def _process_ui_queue(self):
         while not self.ui_queue.empty():
@@ -261,61 +261,69 @@ class ServiceManagerGUI:
                     self.log_text.see("end")
                     self.log_text.configure(state="disabled")
                 elif item_type == "status":
-                    key, running = data
-                    var = self.status_vars[key]
-                    lbl = self.row_widgets[key]["status_label"]
-                    if running:
-                        var.set("Running")
-                        lbl.configure(foreground="green")
-                    else:
-                        var.set("Stopped")
-                        lbl.configure(foreground="red")
+                    key, text, color = data
+                    self.status_vars[key].set(text)
+                    self.row_widgets[key]["status_label"].configure(foreground=color)
             except queue.Empty:
                 break
         if self._polling_active:
             self.root.after(100, self._process_ui_queue)
 
     def start_service(self, key):
-        svc = next(s for s in SERVICES if s["key"] == key)
-        if self._is_running(key):
-            self._log(f"{svc['name']} is already running.")
-            return
+        def _bg_start():
+            svc = next(s for s in SERVICES if s["key"] == key)
+            
+            # Check if port is already open
+            if "port" in svc and port_is_open(svc.get("host", "127.0.0.1"), svc["port"]):
+                self._log(f"{svc['name']} is already running and listening on port {svc['port']}.")
+                self._set_status_ui(key, "Running", "green")
+                return
 
-        cwd = Path(svc["cwd"])
-        if not cwd.exists():
-            self._log(f"ERROR: folder not found for {svc['name']}: {cwd}")
-            return
+            self._set_status_ui(key, "Starting...", "#D97706")  # Amber
 
-        log_path = LOG_DIR / f"{key}.log"
-        log_file = open(log_path, "a", encoding="utf-8", errors="replace")
-        log_file.write(f"\n\n===== Launch {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
-        log_file.flush()
+            cwd = Path(svc["cwd"])
+            if not cwd.exists():
+                err_msg = f"ERROR: Folder not found: {cwd}"
+                self._log(err_msg)
+                self._set_status_ui(key, "Error: Path Missing", "red")
+                return
 
-        hJob = create_kill_on_close_job()
-        if hJob is None:
-            self._log(f"ERROR: could not create job object for {svc['name']}.")
-            return
+            log_path = LOG_DIR / f"{key}.log"
+            try:
+                log_file = open(log_path, "a", encoding="utf-8", errors="replace")
+                log_file.write(f"\n\n===== Launch {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                log_file.flush()
+            except Exception as e:
+                self._log(f"ERROR creating log file for {svc['name']}: {e}")
 
-        try:
-            proc = subprocess.Popen(
-                ["cmd", "/c", svc["command"]],
-                cwd=str(cwd),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                creationflags=CREATE_NO_WINDOW,
-            )
-        except Exception as e:
-            self._log(f"ERROR starting {svc['name']}: {e}")
-            close_job(hJob)
-            return
+            hJob = create_kill_on_close_job()
+            if hJob is None:
+                self._log(f"ERROR: could not create job object for {svc['name']}.")
+                self._set_status_ui(key, "Error: Job Fail", "red")
+                return
 
-        assign_pid_to_job(hJob, proc.pid)
-        self.jobs[key] = hJob
-        self.display_pids[key] = proc.pid
-        self._set_status(key, True)
-        self._save_pids()
-        self._log(f"Started {svc['name']} (PID {proc.pid}).")
+            try:
+                proc = subprocess.Popen(
+                    ["cmd", "/c", svc["command"]],
+                    cwd=str(cwd),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+            except Exception as e:
+                self._log(f"ERROR launching {svc['name']}: {e}")
+                close_job(hJob)
+                self._set_status_ui(key, "Error: Launch Fail", "red")
+                return
+
+            assign_pid_to_job(hJob, proc.pid)
+            self.jobs[key] = hJob
+            self.display_pids[key] = proc.pid
+            self._save_pids()
+            self._log(f"Process spawned for {svc['name']} (PID {proc.pid}). Waiting for port {svc['port']}...")
+
+        threading.Thread(target=_bg_start, daemon=True).start()
 
     def stop_service(self, key):
         svc = next(s for s in SERVICES if s["key"] == key)
@@ -328,7 +336,7 @@ class ServiceManagerGUI:
             close_job(hJob)
 
         self.jobs.pop(key, None)
-        self._set_status(key, False)
+        self._set_status_ui(key, "Stopped", "red")
         self._save_pids()
         self._log(f"Stopped {svc['name']}.")
 
@@ -358,7 +366,6 @@ class ServiceManagerGUI:
         for svc in SERVICES:
             self.start_service(svc["key"])
         
-        # Start watching for port 3000 to open up in browser
         self._frontend_watch_stop = False
         threading.Thread(target=self._watch_for_frontend, daemon=True).start()
 
@@ -394,7 +401,10 @@ class ServiceManagerGUI:
                 self._log(f"Found {svc['name']} active from previous session.")
                 self.display_pids[key] = pid
                 self.jobs[key] = ("legacy_pid", pid)
-                self._set_status(key, True)
+                if port_open:
+                    self._set_status_ui(key, "Running", "green")
+                else:
+                    self._set_status_ui(key, "Starting...", "#D97706")
 
         self._save_pids()
 
@@ -408,7 +418,7 @@ class ServiceManagerGUI:
             else:
                 close_job(hJob)
             self.jobs.pop(key, None)
-            self._set_status(key, False)
+            self._set_status_ui(key, "Stopped", "red")
         self._save_pids()
 
         ports = [str(s["port"]) for s in SERVICES if "port" in s]
@@ -444,35 +454,43 @@ class ServiceManagerGUI:
         if not self._frontend_watch_stop:
             self.root.after(0, lambda: self._log(f"Gave up waiting for port {FRONTEND_PORT} after {FRONTEND_WAIT_MAX_SECONDS}s."))
 
-    def _is_running(self, key):
-        svc = next(s for s in SERVICES if s["key"] == key)
-        
-        if "port" in svc and port_is_open(svc.get("host", "127.0.0.1"), svc["port"]):
-            return True
-
-        entry = self.jobs.get(key)
-        if entry is None:
-            return False
-        if isinstance(entry, tuple) and entry[0] == "legacy_pid":
-            return is_pid_alive_fast(entry[1])
-        return job_alive_process_count(entry) > 0
-
     def _bg_poll_loop(self):
+        """Monitors real port and process status accurately."""
         while self._polling_active:
             for svc in SERVICES:
                 key = svc["key"]
-                running = self._is_running(key)
-                self._set_status(key, running)
-                if not running and key in self.jobs:
-                    entry = self.jobs.pop(key)
-                    if not (isinstance(entry, tuple) and entry[0] == "legacy_pid"):
-                        close_job(entry)
-                    self._save_pids()
+                has_job = key in self.jobs
+                port_active = port_is_open(svc.get("host", "127.0.0.1"), svc.get("port", 0)) if svc.get("port") else False
+
+                if port_active:
+                    self._set_status_ui(key, "Running", "green")
+                elif has_job:
+                    # Check if process crashed/died before port opened
+                    entry = self.jobs.get(key)
+                    alive = False
+                    if isinstance(entry, tuple) and entry[0] == "legacy_pid":
+                        alive = is_pid_alive_fast(entry[1])
+                    else:
+                        alive = job_alive_process_count(entry) > 0
+
+                    if alive:
+                        self._set_status_ui(key, "Starting...", "#D97706")  # Amber / Yellow
+                    else:
+                        # Process died unexpectedly
+                        self.jobs.pop(key, None)
+                        self._save_pids()
+                        self._log(f"ERROR: {svc['name']} process exited unexpectedly before opening port {svc['port']}. Check log: {key}.log")
+                        self._set_status_ui(key, "Error / Crashed", "red")
+                else:
+                    curr_val = self.status_vars[key].get()
+                    if not curr_val.startswith("Error"):
+                        self._set_status_ui(key, "Stopped", "red")
+
             time.sleep(1.5)
 
     def _on_close(self):
         self._polling_active = False
-        if any(self._is_running(s["key"]) for s in SERVICES):
+        if any(port_is_open(s.get("host", "127.0.0.1"), s.get("port", 0)) for s in SERVICES):
             if messagebox.askyesno("Services still running", "Some services are still running. Stop them before closing?"):
                 self.stop_all()
                 time.sleep(0.5)
