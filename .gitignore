@@ -1,5 +1,9 @@
 
 /data
+/dist
+/build
+/logs
+ServiceManager.spec
 
 .venv
 __pycache
@@ -62,7 +66,6 @@ temp/
 *.tgz
 *.rar
 *.7z
-*.exe
 *.dll
 *.so
 *.dylib
