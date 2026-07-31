@@ -5,7 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import LocationSearchBox from "./LocationSearchBox.tsx";
 import { SearchResult } from "@/hooks/useLocationSearch";
-import VALHALLA_BACKENDAPI from "@/util/valhalla-backendurl.js";
+import VALHALLA_BACKENDAPI from "@/util/valhalla-backendurl";
 
 type Point = { lat: number; lon: number; label: string };
 type PickTarget = "from" | "to" | null;

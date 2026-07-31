@@ -166,23 +166,6 @@ Now go to http://localhost:3000 to show the UI -->
 ```bash
 cd search-backend
 npm install
-```
-
-Update the file path in:
-
-```ts
-const filePath = path.join(__dirname, "../map-data-pbf/delhi.osm.pbf");
-```
-
-Build the search database (required whenever the `.osm.pbf` file changes):
-
-```bash
-npm run build-db
-```
-
-Start the backend:
-
-```bash
 npm run dev
 ```
 
@@ -192,13 +175,18 @@ Install the Python dependencies:
 
 ```bash
 cd valhalla
+python -m venv .venv
+.\.venv\Scripts\Activate
 pip install -r requirements.txt
 ```
 
 Start the server:
-
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8002
+```
+Or if you don't want to activate venv, then this command, provided uvicorn is downloaded
+```bash
+py -m uvicorn app:app --host 0.0.0.0 --port 8002 
 ```
 
 ## 4. Start the Frontend
@@ -286,6 +274,8 @@ Install the Python dependencies:
 
 ```bash
 cd valhalla
+python -m venv .venv
+.\.venv\Scripts\Activate
 pip install -r requirements.txt
 ```
 
