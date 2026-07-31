@@ -10,6 +10,11 @@
 - Python 3.13+
 - Git
 
+# Start the Default Project (Delhi Map)
+```cmd
+  Double click the ServiceManager.exe and wait
+```
+
 ---
 
 ## Important Things to Remember
@@ -23,7 +28,7 @@
 
 ---
 
-# Start the Default Project (Delhi Map)
+# Start the Default Project without exe (Delhi Map) 
 
 ## 1. Start the Martin Server
 

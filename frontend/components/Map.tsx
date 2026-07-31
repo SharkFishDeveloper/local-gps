@@ -18,6 +18,11 @@ const API_BASE = VALHALLA_BACKENDAPI;
 const ROUTE_SOURCE_ID = "route-source";
 const ROUTE_LAYER_ID = "route-layer";
 
+// How often we accept a new GPS fix and push it into "from" / recompute the
+// route, similar to how turn-by-turn apps re-route on an interval rather
+// than on every raw GPS event (which can fire many times a second).
+const GPS_UPDATE_INTERVAL_MS = 5000;
+
 type RouteSummary = {
   distanceKm: number;
   durationMin: number;
@@ -85,6 +90,13 @@ export default function Map() {
   const [routeError, setRouteError] = useState<string | null>(null);
 
   const [mode, setMode] = useState<TravelMode>("auto");
+
+  // --- Live GPS tracking for the "from" point --------------------------
+  const [gpsActive, setGpsActive] = useState(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const watchIdRef = useRef<number | null>(null);
+  const lastGpsFixAtRef = useRef(0);
+
   // Initialize map once
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -270,13 +282,81 @@ export default function Map() {
     }
   }, [from, to, mode]);
 
-  const handleFromSelect = (result: SearchResult) =>
+  // Start/stop watching the browser's GPS position while gpsActive is on.
+  // New fixes are throttled to GPS_UPDATE_INTERVAL_MS so the route only
+  // recomputes every few seconds (like turn-by-turn apps) instead of on
+  // every raw geolocation event.
+  useEffect(() => {
+    if (!gpsActive) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      return;
+    }
+
+    if (!("geolocation" in navigator)) {
+      setGpsError("Geolocation is not supported by this browser.");
+      setGpsActive(false);
+      return;
+    }
+
+    setGpsError(null);
+
+    const id = navigator.geolocation.watchPosition(
+      (position) => {
+        const now = Date.now();
+        if (now - lastGpsFixAtRef.current < GPS_UPDATE_INTERVAL_MS) return;
+        lastGpsFixAtRef.current = now;
+
+        const { latitude, longitude } = position.coords;
+        setFrom({
+          lat: latitude,
+          lon: longitude,
+          label: "My Location",
+        });
+      },
+      (err) => {
+        setGpsError(err.message || "Unable to get your location.");
+        setGpsActive(false);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000,
+      }
+    );
+
+    watchIdRef.current = id;
+
+    return () => {
+      navigator.geolocation.clearWatch(id);
+      watchIdRef.current = null;
+    };
+  }, [gpsActive]);
+
+  const handleFromSelect = (result: SearchResult) => {
+    setGpsActive(false);
     setFrom({ lat: result.lat, lon: result.lon, label: result.name });
+  };
 
   const handleToSelect = (result: SearchResult) =>
     setTo({ lat: result.lat, lon: result.lon, label: result.name });
 
+  const handleFromPickOnMap = () => {
+    setGpsActive(false);
+    setPicking(picking === "from" ? null : "from");
+  };
+
+  const handleToggleGps = () => {
+    setPicking(null);
+    setGpsError(null);
+    setGpsActive((prev) => !prev);
+  };
+
   const handleReset = () => {
+    setGpsActive(false);
+    setGpsError(null);
     setFrom(null);
     setTo(null);
     setPicking(null);
@@ -303,10 +383,23 @@ export default function Map() {
           label="From"
           placeholder="Search starting point..."
           onSelect={handleFromSelect}
-          onPickOnMap={() => setPicking(picking === "from" ? null : "from")}
+          onPickOnMap={handleFromPickOnMap}
           isPicking={picking === "from"}
           externalValue={from?.label}
         />
+        <button
+          type="button"
+          onClick={handleToggleGps}
+          className={`flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+            gpsActive
+              ? "border-blue-300 bg-blue-50 text-blue-700"
+              : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+          }`}
+        >
+          <span className={gpsActive ? "animate-pulse" : ""}>📍</span>
+          {gpsActive ? "Tracking my location…" : "Use my location"}
+        </button>
+        {gpsError && <p className="text-xs text-red-600">{gpsError}</p>}
         <LocationSearchBox
           label="To"
           placeholder="Search destination..."
