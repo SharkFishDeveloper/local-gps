@@ -19,13 +19,23 @@ const ROUTE_SOURCE_ID = "route-source";
 const ROUTE_LAYER_ID = "route-layer";
 
 // How often we accept a new GPS fix and push it into "from" / recompute the
-// route, similar to how turn-by-turn apps re-route on an interval rather
-// than on every raw GPS event (which can fire many times a second).
+// route when just tracking (not actively navigating).
 const GPS_UPDATE_INTERVAL_MS = 5000;
+// Faster refresh while actively navigating, like turn-by-turn apps.
+const NAV_GPS_UPDATE_INTERVAL_MS = 3000;
+// How close (meters) to the destination counts as "arrived".
+const ARRIVAL_THRESHOLD_METERS = 30;
 
 type RouteSummary = {
   distanceKm: number;
   durationMin: number;
+};
+
+type Maneuver = {
+  type: number;
+  instruction: string;
+  length: number; // km for this maneuver's segment
+  time: number; // seconds
 };
 
 type TravelMode = "auto" | "bicycle" | "pedestrian";
@@ -35,6 +45,52 @@ const MODE_LABELS: Record<TravelMode, string> = {
   bicycle: "Bike",
   pedestrian: "Foot",
 };
+
+// Rough icon per Valhalla maneuver "type" code.
+// https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#maneuver-types
+function maneuverIcon(type: number): string {
+  switch (type) {
+    case 1:
+    case 2:
+    case 3:
+      return "🚗"; // start
+    case 4:
+    case 5:
+    case 6:
+      return "🏁"; // destination
+    case 8:
+      return "⬆️"; // continue
+    case 9:
+      return "↗️"; // slight right
+    case 10:
+      return "➡️"; // right
+    case 11:
+      return "↘️"; // sharp right
+    case 12:
+    case 13:
+      return "↩️"; // u-turn
+    case 14:
+      return "↙️"; // sharp left
+    case 15:
+      return "⬅️"; // left
+    case 16:
+      return "↖️"; // slight left
+    case 17:
+    case 18:
+    case 19:
+      return "⤴️"; // ramp
+    case 20:
+    case 21:
+      return "⤵️"; // exit
+    case 25:
+      return "🔀"; // merge
+    case 26:
+    case 27:
+      return "🔄"; // roundabout
+    default:
+      return "⬆️";
+  }
+}
 
 // Valhalla encodes route shapes using Google's polyline algorithm at
 // precision 1e6 ("polyline6") instead of the standard 1e5. This decodes
@@ -75,6 +131,21 @@ function decodePolyline6(encoded: string): [number, number][] {
   return coordinates;
 }
 
+// Haversine distance in meters between two lat/lon points.
+function distanceMeters(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 export default function Map() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -88,6 +159,7 @@ export default function Map() {
   const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [maneuvers, setManeuvers] = useState<Maneuver[]>([]);
 
   const [mode, setMode] = useState<TravelMode>("auto");
 
@@ -96,6 +168,20 @@ export default function Map() {
   const [gpsError, setGpsError] = useState<string | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const lastGpsFixAtRef = useRef(0);
+
+  // --- Turn-by-turn navigation mode -------------------------------------
+  const [navigating, setNavigating] = useState(false);
+  const [arrivalMessage, setArrivalMessage] = useState<string | null>(null);
+  const navigatingRef = useRef(false);
+  const toRef = useRef<Point | null>(null);
+
+  useEffect(() => {
+    navigatingRef.current = navigating;
+  }, [navigating]);
+
+  useEffect(() => {
+    toRef.current = to;
+  }, [to]);
 
   // Initialize map once
   useEffect(() => {
@@ -179,7 +265,12 @@ export default function Map() {
       .setPopup(new maplibregl.Popup({ offset: 25 }).setText(`From: ${from.label}`))
       .addTo(map);
 
-    map.flyTo({ center: [from.lon, from.lat], zoom: 15 });
+    if (navigatingRef.current) {
+      // Keep the view locked on the driver instead of re-fitting bounds.
+      map.easeTo({ center: [from.lon, from.lat], zoom: 17, duration: 800 });
+    } else {
+      map.flyTo({ center: [from.lon, from.lat], zoom: 15 });
+    }
   }, [from]);
 
   // Sync "to" marker
@@ -193,7 +284,9 @@ export default function Map() {
       .setPopup(new maplibregl.Popup({ offset: 25 }).setText(`To: ${to.label}`))
       .addTo(map);
 
-    map.flyTo({ center: [to.lon, to.lat], zoom: 15 });
+    if (!navigatingRef.current) {
+      map.flyTo({ center: [to.lon, to.lat], zoom: 15 });
+    }
   }, [to]);
 
   // Fetch and draw the route whenever both points are set
@@ -209,6 +302,7 @@ export default function Map() {
         geometry: { type: "LineString", coordinates: [] },
       });
       setRouteSummary(null);
+      setManeuvers([]);
     };
 
     const fetchRoute = async () => {
@@ -261,12 +355,21 @@ export default function Map() {
           });
         }
 
-        // Fit the map to the route bounds
-        const bounds = coordinates.reduce(
-          (b: maplibregl.LngLatBounds, coord: [number, number]) => b.extend(coord),
-          new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+        const allManeuvers: Maneuver[] = legs.flatMap(
+          (leg: { maneuvers?: Maneuver[] }) => leg.maneuvers ?? []
         );
-        map.fitBounds(bounds, { padding: 80, maxZoom: 16 });
+        setManeuvers(allManeuvers);
+
+        // Only zoom-to-fit the whole route when we're just planning.
+        // While navigating we stay locked on the live position instead
+        // (handled in the "from" marker effect).
+        if (!navigatingRef.current) {
+          const bounds = coordinates.reduce(
+            (b: maplibregl.LngLatBounds, coord: [number, number]) => b.extend(coord),
+            new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+          );
+          map.fitBounds(bounds, { padding: 80, maxZoom: 16 });
+        }
       } catch (err) {
         clearRoute();
         setRouteError(err instanceof Error ? err.message : "Failed to fetch route.");
@@ -283,9 +386,9 @@ export default function Map() {
   }, [from, to, mode]);
 
   // Start/stop watching the browser's GPS position while gpsActive is on.
-  // New fixes are throttled to GPS_UPDATE_INTERVAL_MS so the route only
-  // recomputes every few seconds (like turn-by-turn apps) instead of on
-  // every raw geolocation event.
+  // New fixes are throttled so the route only recomputes every few seconds
+  // instead of on every raw geolocation event. The throttle interval
+  // shrinks while actively navigating for tighter turn-by-turn updates.
   useEffect(() => {
     if (!gpsActive) {
       if (watchIdRef.current !== null) {
@@ -298,6 +401,7 @@ export default function Map() {
     if (!("geolocation" in navigator)) {
       setGpsError("Geolocation is not supported by this browser.");
       setGpsActive(false);
+      setNavigating(false);
       return;
     }
 
@@ -306,19 +410,32 @@ export default function Map() {
     const id = navigator.geolocation.watchPosition(
       (position) => {
         const now = Date.now();
-        if (now - lastGpsFixAtRef.current < GPS_UPDATE_INTERVAL_MS) return;
+        const interval = navigatingRef.current
+          ? NAV_GPS_UPDATE_INTERVAL_MS
+          : GPS_UPDATE_INTERVAL_MS;
+        if (now - lastGpsFixAtRef.current < interval) return;
         lastGpsFixAtRef.current = now;
 
         const { latitude, longitude } = position.coords;
-        setFrom({
-          lat: latitude,
-          lon: longitude,
-          label: "My Location",
-        });
+        const here = { lat: latitude, lon: longitude };
+
+        // Arrival check while navigating.
+        if (navigatingRef.current && toRef.current) {
+          const remaining = distanceMeters(here, toRef.current);
+          if (remaining <= ARRIVAL_THRESHOLD_METERS) {
+            setArrivalMessage("You have arrived at your destination.");
+            setNavigating(false);
+            setGpsActive(false);
+            return;
+          }
+        }
+
+        setFrom({ ...here, label: "My Location" });
       },
       (err) => {
         setGpsError(err.message || "Unable to get your location.");
         setGpsActive(false);
+        setNavigating(false);
       },
       {
         enableHighAccuracy: true,
@@ -337,31 +454,52 @@ export default function Map() {
 
   const handleFromSelect = (result: SearchResult) => {
     setGpsActive(false);
+    setNavigating(false);
     setFrom({ lat: result.lat, lon: result.lon, label: result.name });
   };
 
-  const handleToSelect = (result: SearchResult) =>
+  const handleToSelect = (result: SearchResult) => {
+    setNavigating(false);
     setTo({ lat: result.lat, lon: result.lon, label: result.name });
+  };
 
   const handleFromPickOnMap = () => {
     setGpsActive(false);
+    setNavigating(false);
     setPicking(picking === "from" ? null : "from");
   };
 
   const handleToggleGps = () => {
+    if (navigating) return;
     setPicking(null);
     setGpsError(null);
     setGpsActive((prev) => !prev);
   };
 
+  const handleStartNavigation = () => {
+    if (!from || !to) return;
+    setArrivalMessage(null);
+    setPicking(null);
+    setNavigating(true);
+    setGpsActive(true); // reuses the same GPS watch, now at nav-speed refresh
+  };
+
+  const handleStopNavigation = () => {
+    setNavigating(false);
+    setGpsActive(false);
+  };
+
   const handleReset = () => {
     setGpsActive(false);
     setGpsError(null);
+    setNavigating(false);
+    setArrivalMessage(null);
     setFrom(null);
     setTo(null);
     setPicking(null);
     setRouteSummary(null);
     setRouteError(null);
+    setManeuvers([]);
     fromMarkerRef.current?.remove();
     toMarkerRef.current?.remove();
     fromMarkerRef.current = null;
@@ -376,84 +514,149 @@ export default function Map() {
     });
   };
 
+  const nextManeuver = maneuvers[0];
+  const afterManeuver = maneuvers[1];
+
   return (
     <div className="relative h-screen w-full">
       <div className="absolute left-2 right-2 top-2 z-10 flex flex-col gap-2 rounded-lg bg-white/95 p-3 shadow-md backdrop-blur-sm sm:left-4 sm:right-auto sm:top-4 sm:w-80">
-        <LocationSearchBox
-          label="From"
-          placeholder="Search starting point..."
-          onSelect={handleFromSelect}
-          onPickOnMap={handleFromPickOnMap}
-          isPicking={picking === "from"}
-          externalValue={from?.label}
-        />
-        <button
-          type="button"
-          onClick={handleToggleGps}
-          className={`flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-            gpsActive
-              ? "border-blue-300 bg-blue-50 text-blue-700"
-              : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
-          }`}
-        >
-          <span className={gpsActive ? "animate-pulse" : ""}>📍</span>
-          {gpsActive ? "Tracking my location…" : "Use my location"}
-        </button>
-        {gpsError && <p className="text-xs text-red-600">{gpsError}</p>}
-        <LocationSearchBox
-          label="To"
-          placeholder="Search destination..."
-          onSelect={handleToSelect}
-          onPickOnMap={() => setPicking(picking === "to" ? null : "to")}
-          isPicking={picking === "to"}
-          externalValue={to?.label}
-        />
-        <div className="flex gap-1 rounded-md bg-gray-100 p-1">
-          {(Object.keys(MODE_LABELS) as TravelMode[]).map((m) => (
+        {navigating && nextManeuver ? (
+          // --- Turn-by-turn navigation panel ---
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3 rounded-md bg-blue-600 px-3 py-3 text-white">
+              <span className="text-3xl leading-none">{maneuverIcon(nextManeuver.type)}</span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold leading-snug">
+                  {nextManeuver.instruction}
+                </p>
+                {nextManeuver.length > 0.01 && (
+                  <p className="text-xs text-blue-100">
+                    in {(nextManeuver.length * 1000).toFixed(0)} m
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {afterManeuver && (
+              <p className="truncate px-1 text-xs text-gray-500">
+                Then: {afterManeuver.instruction}
+              </p>
+            )}
+
+            {routeSummary && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                <span className="font-medium">{routeSummary.distanceKm.toFixed(1)} km</span>
+                {" remaining · "}
+                <span>{Math.round(routeSummary.durationMin)} min</span>
+              </div>
+            )}
+
+            {gpsError && <p className="text-xs text-red-600">{gpsError}</p>}
+
             <button
-              key={m}
               type="button"
-              onClick={() => setMode(m)}
-              className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
-                mode === m
-                  ? "bg-white text-blue-700 shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
+              onClick={handleStopNavigation}
+              className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+            >
+              End navigation
+            </button>
+          </div>
+        ) : (
+          // --- Route planning panel ---
+          <>
+            {arrivalMessage && (
+              <div className="rounded-md bg-green-50 px-3 py-2 text-xs font-medium text-green-800">
+                {arrivalMessage}
+              </div>
+            )}
+
+            <LocationSearchBox
+              label="From"
+              placeholder="Search starting point..."
+              onSelect={handleFromSelect}
+              onPickOnMap={handleFromPickOnMap}
+              isPicking={picking === "from"}
+              externalValue={from?.label}
+            />
+            <button
+              type="button"
+              onClick={handleToggleGps}
+              className={`flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                gpsActive
+                  ? "border-blue-300 bg-blue-50 text-blue-700"
+                  : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
               }`}
             >
-              {MODE_LABELS[m]}
+              <span className={gpsActive ? "animate-pulse" : ""}>📍</span>
+              {gpsActive ? "Tracking my location…" : "Use my location"}
             </button>
-          ))}
-        </div>
-        {picking && (
-          <p className="text-xs text-blue-600">
-            Click anywhere on the map to set the {picking === "from" ? "From" : "To"} location.
-          </p>
-        )}
+            {gpsError && <p className="text-xs text-red-600">{gpsError}</p>}
+            <LocationSearchBox
+              label="To"
+              placeholder="Search destination..."
+              onSelect={handleToSelect}
+              onPickOnMap={() => setPicking(picking === "to" ? null : "to")}
+              isPicking={picking === "to"}
+              externalValue={to?.label}
+            />
+            <div className="flex gap-1 rounded-md bg-gray-100 p-1">
+              {(Object.keys(MODE_LABELS) as TravelMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    mode === m
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {MODE_LABELS[m]}
+                </button>
+              ))}
+            </div>
+            {picking && (
+              <p className="text-xs text-blue-600">
+                Click anywhere on the map to set the {picking === "from" ? "From" : "To"} location.
+              </p>
+            )}
 
-        {routeLoading && (
-          <p className="text-xs text-gray-500">Calculating route…</p>
-        )}
+            {routeLoading && (
+              <p className="text-xs text-gray-500">Calculating route…</p>
+            )}
 
-        {routeError && (
-          <p className="text-xs text-red-600">{routeError}</p>
-        )}
+            {routeError && (
+              <p className="text-xs text-red-600">{routeError}</p>
+            )}
 
-        {routeSummary && !routeLoading && (
-          <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            <span className="font-medium">{routeSummary.distanceKm.toFixed(1)} km</span>
-            {" · "}
-            <span>{Math.round(routeSummary.durationMin)} min</span>
-          </div>
-        )}
+            {routeSummary && !routeLoading && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                <span className="font-medium">{routeSummary.distanceKm.toFixed(1)} km</span>
+                {" · "}
+                <span>{Math.round(routeSummary.durationMin)} min</span>
+              </div>
+            )}
 
-        {(from || to) && (
-          <button
-            type="button"
-            onClick={handleReset}
-            className="mt-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-          >
-            Reset
-          </button>
+            {routeSummary && !routeLoading && from && to && (
+              <button
+                type="button"
+                onClick={handleStartNavigation}
+                className="rounded-md bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700"
+              >
+                ▶ Start navigation
+              </button>
+            )}
+
+            {(from || to) && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="mt-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                Reset
+              </button>
+            )}
+          </>
         )}
       </div>
 
