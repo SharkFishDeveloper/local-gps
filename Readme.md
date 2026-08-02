@@ -61,7 +61,7 @@ uvicorn app:app --host 0.0.0.0 --port 8002
 ```
 Or if you don't want to activate venv, then this command, provided uvicorn is downloaded
 ```bash
-py -m uvicorn app:app --host 0.0.0.0 --port 8002 
+python -m uvicorn app:app --host 0.0.0.0 --port 8002 
 ```
 
 ## 4. Start the Frontend
@@ -176,7 +176,14 @@ uvicorn app:app --host 0.0.0.0 --port 8002
 
 ---
 
-## 7. Start the Frontend
+## 7. Change the location in frontend/public/map-styles/osm-liberty
+```
+"sources": {
+    "openmaptiles": {
+      "type": "vector",
+      "url": "http://localhost:3001/delhi" -> change it to your location (default was delhi.osm.pbf)
+    },
+```
 
 ```bash
 cd frontend
@@ -201,7 +208,7 @@ Once all the services are running, open **http://localhost:3000** in your browse
 # To change the Python GUI
 ```bash
   Change the service_manager.py code
-  py -m pip install pyinstaller 
-  py -m PyInstaller --onefile --noconsole --name ServiceManager service_manager.py
+  python -m pip install pyinstaller 
+  python -m PyInstaller --onefile --noconsole --name ServiceManager service_manager.py
 ```
 ![alt text](image.png)

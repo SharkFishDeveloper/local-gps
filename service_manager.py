@@ -55,7 +55,7 @@ SERVICES = [
         "port": 8002,
         "cwd": BASE_DIR / "valhalla",
         "command": (
-            r'(if not exist .venv (py -m venv .venv && '
+            r'(if not exist .venv (python -m venv .venv && '
             r'.venv\Scripts\python -m pip install -r requirements.txt)) && '
             r'call .venv\Scripts\activate.bat && '
             r'python -m uvicorn app:app --host 0.0.0.0 --port 8002'
