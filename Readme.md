@@ -160,6 +160,8 @@ Generate the Valhalla configuration:
 valhalla_build_config --mjolnir-tile-dir valhalla_tiles --mjolnir-tile-extract valhalla_tiles.tar | sed '1s/^\xEF\xBB\xBF//' > valhalla.json
 ```
 
+Delete the valhalla_tiles folder first.
+
 Build the routing tiles:
 
 ```bash
