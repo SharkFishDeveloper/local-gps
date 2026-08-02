@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "node src/server.js",
-    "build-db": "node build-db.js"
+    "build": "node build-db.js"
   },
   "keywords": [],
   "author": "",

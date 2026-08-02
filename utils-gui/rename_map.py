@@ -3,11 +3,6 @@ import sys
 from pathlib import Path
 from paths import get_base_dir
 
-def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
 ROOT = get_base_dir()
 
 if len(sys.argv) != 2:
@@ -28,24 +23,13 @@ if not mbtile.exists():
     exit(1)
 
 files = [
-    ROOT / "search-backend/src/index.ts",
-    ROOT / "search-backend/build-db.js",
     ROOT / "frontend/public/map-styles/osm-liberty/style.json",
-    ROOT / "utils-gui" / "service_manager.py",
 ]
 
 patterns = [
     (
-        r"map-data-pbf[/\\][^\"']+\.osm\.pbf",
-        f"map-data-pbf/{map_name}.osm.pbf",
-    ),
-    (
         r"http://localhost:3001/[^\"']+",
         f"http://localhost:3001/{map_name}",
-    ),
-    (
-        r"map-tiles[/\\][^\"']+\.mbtiles",
-        f"map-tiles/{map_name}.mbtiles",
     ),
 ]
 

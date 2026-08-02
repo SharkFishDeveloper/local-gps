@@ -3,7 +3,13 @@ const Database = require("better-sqlite3");
 const fs = require("fs");
 const path = require("path");
 
-const filePath = path.join(__dirname, "../map-data-pbf/delhi.osm.pbf");
+const mapName = process.argv[2];
+if (!mapName || mapName.trim().length === 0) {
+  console.log("Usage: npm run build --name <map_name>");
+  process.exit(1);
+}
+
+const filePath = path.join(__dirname, `../map-data-pbf/${mapName}.osm.pbf`);
 
 console.log("Looking for file at:", filePath);
 console.log("Exists:", fs.existsSync(filePath));
@@ -13,7 +19,10 @@ if (!fs.existsSync(filePath)) {
   process.exit(1);
 }
 
-const db = new Database("./src/places.db");
+const dbDir = path.join(__dirname, "src", "map-data",mapName);
+fs.mkdirSync(dbDir, { recursive: true });
+
+const db = new Database(path.join(dbDir, `${mapName}.db`));
 
 db.exec(`
   DROP TABLE IF EXISTS places;

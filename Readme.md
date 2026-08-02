@@ -211,6 +211,5 @@ Once all the services are running, open **http://localhost:3000** in your browse
 ```bash
   Change the service_manager.py code
   python -m pip install pyinstaller 
-  python -m PyInstaller --onefile --noconsole --name ServiceManager service_manager.py
-```
+  python -m PyInstaller --onefile --noconsole --name ServiceManager --paths utils-gui utils-gui\service_manager.py
 ![alt text](image.png)

@@ -190,7 +190,7 @@ export default function Map() {
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: "map-styles/osm-liberty/style.json",
-      center: [77.213, 28.623],
+      // center: [77.213, 28.623],
       zoom: 11,
     });
 

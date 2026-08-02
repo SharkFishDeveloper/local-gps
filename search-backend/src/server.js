@@ -7,7 +7,14 @@ const PORT = 4000;
 
 app.use(cors());
 
-const db = new Database("./src/places.db", {
+const mapName = process.argv[2];
+if (!mapName || mapName.trim().length === 0) {
+  console.log("Usage: npm run dev --name <map_name>");
+  process.exit(1);
+}
+
+
+const db = new Database(`./src/map-data/${mapName}/${mapName}.db`, {
     readonly: true,
 });
 

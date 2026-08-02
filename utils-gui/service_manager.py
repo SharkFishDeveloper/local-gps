@@ -13,6 +13,7 @@ from pathlib import Path
 from paths import get_base_dir
 from requirements_check import check_all
 from map_selector import get_available_maps, get_current_map, change_map
+from map_import import MapImportMixin
 
 requirements = check_all()
 
@@ -45,7 +46,7 @@ SERVICES = [
         "host": "127.0.0.1",
         "port": 3001,
         "cwd": BASE_DIR,
-        "command": r'martin-server\martin.exe -l 127.0.0.1:3001 map-tiles/delhi.mbtiles',
+        "command": r'martin-server\martin.exe -l 127.0.0.1:3001 map-tiles/<location>.mbtiles',
     },
     {
         "key": "search",
@@ -53,7 +54,7 @@ SERVICES = [
         "host": "127.0.0.1",
         "port": 4000,
         "cwd": BASE_DIR / "search-backend",
-        "command": r'(if not exist node_modules npm install) && npm run dev',
+        "command": r'(if not exist node_modules npm install) && npm run dev --name <location>',
     },
     {
         "key": "valhalla",
@@ -187,7 +188,7 @@ def port_is_open(host, port, timeout=0.2):
         return False
 
 
-class ServiceManagerGUI:
+class ServiceManagerGUI(MapImportMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("Service Manager")
@@ -277,6 +278,7 @@ class ServiceManagerGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Select from existing map 
         display_maps = [m.capitalize() for m in self.available_maps]
         ttk.OptionMenu(
             top,
@@ -285,6 +287,13 @@ class ServiceManagerGUI:
             *display_maps,
             command=lambda name: change_map(name.lower()),
         ).pack(side="left")
+
+        # Add a new map 
+        ttk.Button(
+            top,
+            text="+ Add Map",
+            command=self.add_map,
+        ).pack(side="left", padx=6)
 
     def _log(self, msg):
         self.ui_queue.put(("log", msg))
