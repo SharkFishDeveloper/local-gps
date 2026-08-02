@@ -24,20 +24,18 @@ if not venv_python.exists():
     )
 
 # Install dependencies only if valhalla_build_config is missing
-if not valhalla_build_config.exists():
-    subprocess.run(
-        [
-            str(venv_python),
-            "-m",
-            "pip",
-            "install",
-            "-r",
-            "requirements.txt",
-        ],
-        cwd=ROOT,
-        check=True,
-    )
-
+subprocess.run(
+    [
+        str(venv_python),
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        "requirements.txt",
+    ],
+    cwd=ROOT,
+    check=True,
+)
 tile_dir = ROOT / "valhalla_tiles" / location
 tile_dir.mkdir(parents=True, exist_ok=True)
 
