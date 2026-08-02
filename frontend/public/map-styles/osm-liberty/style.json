@@ -9,7 +9,7 @@
    "sources": {
     "openmaptiles": {
       "type": "vector",
-      "url": "http://localhost:3001/delhi"
+      "url": "http://localhost:3001/sirhind"
     },
     "natural_earth_shaded_relief": {
       "maxzoom": 6,

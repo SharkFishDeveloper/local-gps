@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -14,7 +15,6 @@ MAP_NAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def get_base_dir() -> Path:
-    """Same frozen-exe-safe base dir logic used in service_manager.py"""
     import sys
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -22,10 +22,7 @@ def get_base_dir() -> Path:
 
 
 class MapImportMixin:
-    """Mix into ServiceManagerGUI to get the Add Map button behavior."""
-
     _map_import_running = False
-
     # ---------------- Progress bar (lazily created, doesn't touch _build_ui) ----------------
     def _ensure_progress_ui(self):
         if getattr(self, "_progress_frame", None) is not None:
@@ -145,20 +142,34 @@ class MapImportMixin:
                 self._finish_map_import_threadsafe(False, map_name)
                 return
 
-            planetiler_cmd = [
-                "java",
-                "-Xmx8g",
-                "-jar",
-                "--force",
-                str(planetiler_jar),
-                "--download",
-                f"--osm-path={dest_pbf}",
-                f"--output={out_mbtiles}",
-            ]
-            rc = self._stream_subprocess(planetiler_cmd, cwd=base)
+            heap_sizes = ["8g", "4g", "2g", "1g"]
+            rc = None
+            for i, heap in enumerate(heap_sizes):
+                planetiler_cmd = [
+                    "java",
+                    f"-Xmx{heap}",
+                    "-jar",
+                    str(planetiler_jar),
+                    "--force",
+                    "--download",
+                    f"--osm-path={dest_pbf}",
+                    f"--output={out_mbtiles}",
+                ]
+                self._log_map(f"Attempting Planetiler with -Xmx{heap} (attempt {i + 1}/{len(heap_sizes)})...")
+                self._set_progress(10, f"Running Planetiler ({heap} heap)...")
+                rc = self._stream_subprocess(planetiler_cmd, cwd=base)
+
+                if rc == 0:
+                    self._log_map(f"Planetiler succeeded with -Xmx{heap}.")
+                    break
+
+                self._log_map(f"Planetiler failed with -Xmx{heap} (exit code {rc}).")
+                if i < len(heap_sizes) - 1:
+                    self._log_map(f"Retrying with a smaller heap ({heap_sizes[i + 1]})...")
+
             if rc != 0:
-                self._log_map(f"ERROR: planetiler exited with code {rc}")
-                self._set_progress(10, "Failed: Planetiler error.")
+                self._log_map(f"ERROR: planetiler failed at every heap size tried ({', '.join(heap_sizes)}). Last exit code: {rc}")
+                self._set_progress(10, "Failed: Planetiler error (all heap sizes exhausted).")
                 self._finish_map_import_threadsafe(False, map_name)
                 return
 
@@ -221,11 +232,7 @@ class MapImportMixin:
                 self._finish_map_import_threadsafe(False, map_name)
                 return
 
-            self._log_map(f"=== Map '{map_name}' imported and search database built successfully ===")
             self._set_progress(75, "Search database built. Starting Valhalla...")
-            self._finish_map_import_threadsafe(True, map_name)
-
-
             # ------------------------------------------------------------------
             # Valhalla
             # ------------------------------------------------------------------
@@ -234,11 +241,11 @@ class MapImportMixin:
             self._log_map("Building Valhalla routing data...")
             self._set_progress(80, "Building Valhalla routing data...")
 
-            python_exe = sys.executable if getattr(sys, "frozen", False) else "python"
+            venv_python = valhalla_dir / ".venv" / "Scripts" / "python.exe"
 
             rc = self._stream_subprocess(
                 [
-                    python_exe,
+                    str(venv_python),
                     "init.py",
                     map_name,
                 ],

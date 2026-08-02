@@ -38,10 +38,10 @@ def get_available_maps():
         print(f"Found PBF: {name}")
 
         if name.lower() in mbtiles:
-            print(f"  ✓ Match -> {mbtiles[name.lower()].name}")
+            print(f" Ok  Match -> {mbtiles[name.lower()].name}")
             maps.append(name)
         else:
-            print(f"  ✗ No matching MBTiles ({name}.mbtiles)")
+            print(f"  No matching MBTiles ({name}.mbtiles)")
 
     print("\nMaps found:", maps)
     print("=" * 60)

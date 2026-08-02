@@ -130,7 +130,7 @@ const filePath = path.join(__dirname, "../map-data-pbf/[filename].osm.pbf");
 Build the search database:
 
 ```bash
-npm run build-db
+npm run build
 ```
 
 This command extracts searchable places from the `.osm.pbf` file and stores them in a SQLite database. Run it whenever you change the map data.

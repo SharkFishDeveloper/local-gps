@@ -71,3 +71,44 @@ config.write_text(
 print(f"valhalla.json generated successfully.")
 print(f"Tile directory : {tile_dir}")
 print(f"Tile extract   : {tile_extract}")
+
+# ------------------------------------------------------------
+# Build routing tiles
+# ------------------------------------------------------------
+
+pbf_file = ROOT.parent / "map-data-pbf" / f"{location}.osm.pbf"
+
+if not pbf_file.exists():
+    print(f"Error: {pbf_file} not found.")
+    sys.exit(1)
+
+print("\nBuilding Valhalla routing tiles...")
+
+cmd = (
+    r'call .venv\Scripts\activate.bat && '
+    r'python -m valhalla valhalla_build_tiles '
+    r'-c valhalla.json '
+    rf'{pbf_file}'
+)
+
+subprocess.run(
+    ["cmd", "/c", cmd],
+    cwd=ROOT,
+    check=True,
+)
+
+# subprocess.run(
+#     [
+#         str(venv_python),
+#         "-m",
+#         "valhalla",
+#         "valhalla_build_tiles",
+#         "-c",
+#         "valhalla.json",
+#         str(pbf_file),
+#     ],
+#     cwd=ROOT,
+#     check=True,
+# )
+
+print("Valhalla routing tiles built successfully.")

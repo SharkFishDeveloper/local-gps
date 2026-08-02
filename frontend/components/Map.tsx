@@ -183,15 +183,38 @@ export default function Map() {
     toRef.current = to;
   }, [to]);
 
-  // Initialize map once
+
   useEffect(() => {
-    if (!mapContainer.current) return;
+  if (!mapContainer.current) return;
+
+  const initMap = async () => {
+    const style = await fetch("map-styles/osm-liberty/style.json").then(r => r.json());
+
+    const location = style.sources.openmaptiles.url.split("/").pop();
+
+    const tileJson = await fetch(`http://localhost:3001/${location}`).then(r => r.json());
+
+    let center: [number, number];
+    let zoom = 11;
+
+    if (tileJson.center) {
+      center = [tileJson.center[0], tileJson.center[1]];
+      if (tileJson.center.length >= 3) {
+        zoom = tileJson.center[2];
+      }
+    } else {
+      const [minLon, minLat, maxLon, maxLat] = tileJson.bounds;
+      center = [
+        (minLon + maxLon) / 2,
+        (minLat + maxLat) / 2,
+      ];
+    }
 
     const map = new maplibregl.Map({
-      container: mapContainer.current,
+      container: mapContainer.current!,
       style: "map-styles/osm-liberty/style.json",
-      // center: [77.213, 28.623],
-      zoom: 11,
+      center,
+      zoom,
     });
 
     map.on("load", () => {
@@ -202,7 +225,10 @@ export default function Map() {
         data: {
           type: "Feature",
           properties: {},
-          geometry: { type: "LineString", coordinates: [] },
+          geometry: {
+            type: "LineString",
+            coordinates: [],
+          },
         },
       });
 
@@ -210,7 +236,10 @@ export default function Map() {
         id: ROUTE_LAYER_ID,
         type: "line",
         source: ROUTE_SOURCE_ID,
-        layout: { "line-join": "round", "line-cap": "round" },
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
         paint: {
           "line-color": ROUTE_LINE_COLOR,
           "line-width": 5,
@@ -220,11 +249,16 @@ export default function Map() {
     });
 
     mapRef.current = map;
-    return () => {
-      mapLoadedRef.current = false;
-      map.remove();
-    };
-  }, []);
+  };
+
+  initMap();
+
+  return () => {
+    mapLoadedRef.current = false;
+    mapRef.current?.remove();
+    mapRef.current = null;
+  };
+}, []);
 
   // Handle "pick on map" clicks
   useEffect(() => {

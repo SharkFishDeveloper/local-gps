@@ -39,6 +39,10 @@ FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = 3000
 FRONTEND_WAIT_MAX_SECONDS = 90
 
+RENAME_MAP_SCRIPT = BASE_DIR / "utils-gui" / "rename_map.py"
+
+VALHALLA_GEN_SCRIPT = "generate_only_json.py"
+
 SERVICES = [
     {
         "key": "martin",
@@ -46,7 +50,7 @@ SERVICES = [
         "host": "127.0.0.1",
         "port": 3001,
         "cwd": BASE_DIR,
-        "command": r'martin-server\martin.exe -l 127.0.0.1:3001 map-tiles/<location>.mbtiles',
+        "command": r'martin-server\martin.exe -l 127.0.0.1:3001 map-tiles/{location}.mbtiles',
     },
     {
         "key": "search",
@@ -54,7 +58,7 @@ SERVICES = [
         "host": "127.0.0.1",
         "port": 4000,
         "cwd": BASE_DIR / "search-backend",
-        "command": r'(if not exist node_modules npm install) && npm run dev --name <location>',
+        "command": r'(if not exist node_modules npm install) && npm run dev --name {location}',
     },
     {
         "key": "valhalla",
@@ -66,6 +70,7 @@ SERVICES = [
             r'(if not exist .venv (python -m venv .venv && '
             r'.venv\Scripts\python -m pip install -r requirements.txt)) && '
             r'call .venv\Scripts\activate.bat && '
+            rf'python .\{VALHALLA_GEN_SCRIPT} {{location}} && '
             r'python -m uvicorn app:app --host 0.0.0.0 --port 8002'
         ),
     },
@@ -75,7 +80,11 @@ SERVICES = [
         "host": "127.0.0.1",
         "port": 3000,
         "cwd": BASE_DIR / "frontend",
-        "command": r'(if not exist node_modules npm install) && npm run dev',
+        "command": (
+            r'(if not exist node_modules npm install) && '
+            r'python "{rename_script}" {location} && '
+            r'npm run dev'
+        ),
     },
 ]
 
@@ -193,12 +202,13 @@ class ServiceManagerGUI(MapImportMixin):
         self.root = root
         self.root.title("Service Manager")
         self.root.geometry("820x550")
-        self.root.minsize(720, 480)
+        self.root.minsize(900, 600)
         self.jobs = {}
         self.display_pids = {}
         self.status_vars = {}
         self.row_widgets = {}
         self._frontend_watch_stop = False
+        self._switching_location = False
 
         self._polling_active = True
         self.ui_queue = queue.Queue()
@@ -207,6 +217,8 @@ class ServiceManagerGUI(MapImportMixin):
         self.current_map = tk.StringVar(
             value=get_current_map() or "No Maps"
         )
+        self._last_location = self.current_map.get().lower()
+
         self._build_ui()
         self._recover_previous_session()
 
@@ -278,17 +290,18 @@ class ServiceManagerGUI(MapImportMixin):
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Select from existing map 
+        # Select from existing map
         display_maps = [m.capitalize() for m in self.available_maps]
-        ttk.OptionMenu(
+        self.map_menu = ttk.OptionMenu(
             top,
             self.current_map,
             self.current_map.get().capitalize(),
             *display_maps,
-            command=lambda name: change_map(name.lower()),
-        ).pack(side="left")
+            command=self._on_location_selected,
+        )
+        self.map_menu.pack(side="left")
 
-        # Add a new map 
+        # Add a new map
         ttk.Button(
             top,
             text="+ Add Map",
@@ -320,10 +333,22 @@ class ServiceManagerGUI(MapImportMixin):
         if self._polling_active:
             self.root.after(100, self._process_ui_queue)
 
+    def _current_location(self):
+        """The location string (lowercase) that services should be launched with."""
+        return self.current_map.get().lower()
+
+    def _build_command(self, svc, location):
+        """Fill in {location} / {rename_script} placeholders for a service's command."""
+        return svc["command"].format(
+            location=location,
+            rename_script=str(RENAME_MAP_SCRIPT),
+        )
+
     def start_service(self, key):
         def _bg_start():
             svc = next(s for s in SERVICES if s["key"] == key)
-            
+            location = self._current_location()
+
             # Check if port is already open
             if "port" in svc and port_is_open(svc.get("host", "127.0.0.1"), svc["port"]):
                 self._log(f"{svc['name']} is already running and listening on port {svc['port']}.")
@@ -339,10 +364,17 @@ class ServiceManagerGUI(MapImportMixin):
                 self._set_status_ui(key, "Error: Path Missing", "red")
                 return
 
+            try:
+                command = self._build_command(svc, location)
+            except Exception as e:
+                self._log(f"ERROR building command for {svc['name']}: {e}")
+                self._set_status_ui(key, "Error: Bad Command", "red")
+                return
+
             log_path = LOG_DIR / f"{key}.log"
             try:
                 log_file = open(log_path, "a", encoding="utf-8", errors="replace")
-                log_file.write(f"\n\n===== Launch {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                log_file.write(f"\n\n===== Launch {time.strftime('%Y-%m-%d %H:%M:%S')} (location={location}) =====\n")
                 log_file.flush()
             except Exception as e:
                 self._log(f"ERROR creating log file for {svc['name']}: {e}")
@@ -355,7 +387,8 @@ class ServiceManagerGUI(MapImportMixin):
 
             try:
                 proc = subprocess.Popen(
-                    ["cmd", "/c", svc["command"]],
+                    command,
+                    shell=True,
                     cwd=str(cwd),
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
@@ -372,7 +405,7 @@ class ServiceManagerGUI(MapImportMixin):
             self.jobs[key] = hJob
             self.display_pids[key] = proc.pid
             self._save_pids()
-            self._log(f"Process spawned for {svc['name']} (PID {proc.pid}). Waiting for port {svc['port']}...")
+            self._log(f"Process spawned for {svc['name']} (PID {proc.pid}, location='{location}'). Waiting for port {svc['port']}...")
 
         threading.Thread(target=_bg_start, daemon=True).start()
 
@@ -413,18 +446,30 @@ class ServiceManagerGUI(MapImportMixin):
             pass
 
     def start_all(self):
-        self._log("Starting all services...")
+        location = self._current_location()
+        self._log(f"Starting all services for location '{location}'...")
         for svc in SERVICES:
             self.start_service(svc["key"])
-        
+
         self._frontend_watch_stop = False
         threading.Thread(target=self._watch_for_frontend, daemon=True).start()
 
     def stop_all(self):
         self._log("Stopping all services...")
         self._frontend_watch_stop = True
+        threads = []
         for svc in SERVICES:
-            threading.Thread(target=self.stop_service, args=(svc["key"],), daemon=True).start()
+            t = threading.Thread(target=self.stop_service, args=(svc["key"],), daemon=True)
+            threads.append(t)
+            t.start()
+        return threads
+
+    def _stop_all_blocking(self):
+        """Synchronous variant of stop_all, safe to call from a background thread."""
+        self._log("Stopping all services...")
+        self._frontend_watch_stop = True
+        for svc in SERVICES:
+            self.stop_service(svc["key"])
 
     def _save_pids(self):
         data = {key: pid for key, pid in self.display_pids.items() if key in self.jobs}
@@ -538,6 +583,54 @@ class ServiceManagerGUI(MapImportMixin):
                         self._set_status_ui(key, "Stopped", "red")
 
             time.sleep(1.5)
+
+    def _on_location_selected(self, display_name):
+        """
+        Called when the user picks a new map in the dropdown.
+
+        This ONLY force-stops all running services and records the newly
+        selected location name (used by start_service()/_current_location()
+        the next time services are started). It does NOT auto-restart
+        anything -- the user has to click "Start All Services" themselves
+        once they're ready.
+        """
+        new_location = display_name.lower()
+
+        if self._switching_location:
+            self._log("Already switching location, please wait...")
+            return
+
+        if new_location == self._last_location:
+            # Nothing to do, same location re-selected.
+            return
+
+        self._switching_location = True
+        try:
+            self.map_menu.configure(state="disabled")
+        except Exception:
+            pass
+
+        def _bg_switch():
+            try:
+                self._log(f"Location changed to '{display_name}'. Force-stopping all services...")
+
+                # 1. Force-stop everything currently running/tracked.
+                self.force_kill_all()
+                time.sleep(0.5)
+
+                # 2. Persist the new selected map name only. No restart.
+                try:
+                    change_map(new_location)
+                except Exception as e:
+                    self._log(f"ERROR changing map to '{new_location}': {e}")
+
+                self._last_location = new_location
+                self._log(f"Map set to '{display_name}'. Click 'Start All Services' when ready.")
+            finally:
+                self._switching_location = False
+                self.root.after(0, lambda: self.map_menu.configure(state="normal"))
+
+        threading.Thread(target=_bg_switch, daemon=True).start()
 
     def _on_close(self):
         self._polling_active = False
