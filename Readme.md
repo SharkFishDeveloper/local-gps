@@ -99,7 +99,7 @@ The frontend cannot render an `.osm.pbf` file directly, so it must first be conv
 Run from the project root:
 
 ```bash
-java -Xmx8g -jar planetiler.jar --osm-path=map-data-pbf/[filename].osm.pbf --output=map-tiles/[filename].mbtiles
+java -Xmx8g -jar planetiler.jar  --download --osm-path=map-data-pbf/[filename].osm.pbf --output=map-tiles/[filename].mbtiles
 ```
 
 ---
