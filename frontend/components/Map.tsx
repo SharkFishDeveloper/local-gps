@@ -15,6 +15,8 @@ type PickTarget = "from" | "to" | null;
 type TravelMode = "auto" | "bicycle" | "pedestrian";
 type LonLat = [number, number];
 type Fix = { lon: number; lat: number; bearing: number };
+type Maneuver = { type: number; instruction: string; atDistanceM: number };
+type CurrentManeuver = { type: number; instruction: string; remainingM: number };
 
 const API_BASE = VALHALLA_BACKENDAPI;
 const ROUTE_SOURCE_ID = "route-source";
@@ -31,6 +33,112 @@ const MODE_META: Record<TravelMode, { label: string; Icon: (p: { className?: str
   bicycle: { label: "Bike", Icon: BikeIcon },
   pedestrian: { label: "Foot", Icon: WalkIcon },
 };
+
+// ---- turn icon / instruction helpers ----------------------------------
+
+type IconKind =
+  | "straight"
+  | "left"
+  | "right"
+  | "slight-left"
+  | "slight-right"
+  | "sharp-left"
+  | "sharp-right"
+  | "uturn"
+  | "roundabout"
+  | "arrive";
+
+// Valhalla maneuver "type" codes -> simplified icon kind.
+// https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#maneuver-types
+const MANEUVER_ICON: Record<number, IconKind> = {
+  0: "straight",
+  1: "straight",
+  7: "straight",
+  8: "straight",
+  17: "straight",
+  22: "straight",
+  25: "straight",
+  9: "slight-right",
+  18: "slight-right",
+  20: "slight-right",
+  23: "slight-right",
+  16: "slight-left",
+  19: "slight-left",
+  21: "slight-left",
+  24: "slight-left",
+  2: "right",
+  10: "right",
+  3: "left",
+  15: "left",
+  11: "sharp-right",
+  14: "sharp-left",
+  12: "uturn",
+  13: "uturn",
+  26: "roundabout",
+  27: "roundabout",
+  4: "arrive",
+  5: "arrive",
+  6: "arrive",
+};
+
+function getIconKind(type: number): IconKind {
+  return MANEUVER_ICON[type] ?? "straight";
+}
+
+const ARROW_ROTATION: Partial<Record<IconKind, number>> = {
+  straight: 0,
+  "slight-right": 35,
+  right: 90,
+  "sharp-right": 135,
+  "slight-left": -35,
+  left: -90,
+  "sharp-left": -135,
+};
+
+function TurnIcon({ kind, className }: { kind: IconKind; className?: string }) {
+  if (kind === "arrive") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none">
+        <path d="M6 21V4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M6 4l11 3.5L6 11" fill="currentColor" stroke="currentColor" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "roundabout") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none">
+        <circle cx="12" cy="13" r="7" stroke="currentColor" strokeWidth="2.2" />
+        <path d="M12 3v6l3.5-2.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "uturn") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none">
+        <path d="M16 20V10a5 5 0 0 0-10 0v3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M3 13l3 4 3-4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  const deg = ARROW_ROTATION[kind] ?? 0;
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" style={{ transform: `rotate(${deg}deg)` }}>
+      <path
+        d="M12 20V5M12 5l-5.5 5.5M12 5l5.5 5.5"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function formatDistance(m: number): string {
+  if (m < 30) return "now";
+  if (m < 1000) return `${Math.round(m / 10) * 10} m`;
+  return `${(m / 1000).toFixed(1)} km`;
+}
 
 // ---- geo helpers -----------------------------------------------------
 
@@ -54,12 +162,7 @@ function bearingBetween(lon1: number, lat1: number, lon2: number, lat2: number) 
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-// Heading toward the point ~LOOKAHEAD_M meters ahead on the route, so the
-// upcoming road segment renders straight up on screen once the map bearing
-// matches it.
-function headingAlongRoute(lon: number, lat: number, route: LonLat[]): number | null {
-  if (route.length < 2) return null;
-
+function nearestIndexOnRoute(lon: number, lat: number, route: LonLat[]): number {
   let nearestIdx = 0;
   let nearestDist = Infinity;
   for (let i = 0; i < route.length; i++) {
@@ -69,6 +172,27 @@ function headingAlongRoute(lon: number, lat: number, route: LonLat[]): number | 
       nearestIdx = i;
     }
   }
+  return nearestIdx;
+}
+
+// Cumulative distance (meters) walked along the route up to each point.
+// Lets us turn "nearest point index" into "meters traveled" and compare
+// that against where each maneuver begins.
+function computeCumulativeDistances(route: LonLat[]): number[] {
+  const cum: number[] = [0];
+  for (let i = 1; i < route.length; i++) {
+    cum.push(cum[i - 1] + distanceMeters(route[i - 1][0], route[i - 1][1], route[i][0], route[i][1]));
+  }
+  return cum;
+}
+
+// Heading toward the point ~LOOKAHEAD_M meters ahead on the route, so the
+// upcoming road segment renders straight up on screen once the map bearing
+// matches it.
+function headingAlongRoute(lon: number, lat: number, route: LonLat[]): number | null {
+  if (route.length < 2) return null;
+
+  const nearestIdx = nearestIndexOnRoute(lon, lat, route);
 
   let target = route[route.length - 1];
   for (let i = nearestIdx; i < route.length; i++) {
@@ -100,6 +224,8 @@ export default function Map() {
   const navMarkerRef = useRef<maplibregl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const routeCoordsRef = useRef<LonLat[]>([]);
+  const cumDistRef = useRef<number[]>([]);
+  const maneuversRef = useRef<Maneuver[]>([]);
   const lastFixRef = useRef<Fix | null>(null);
   const followRef = useRef(true);
 
@@ -114,6 +240,7 @@ export default function Map() {
   const [navigating, setNavigating] = useState(false);
   const [locating, setLocating] = useState(false);
   const [followMode, setFollowModeState] = useState(true);
+  const [currentManeuver, setCurrentManeuver] = useState<CurrentManeuver | null>(null);
 
   const setFollowMode = (v: boolean) => {
     followRef.current = v;
@@ -267,6 +394,20 @@ export default function Map() {
 
         const coordinates: LonLat[] = legs.flatMap((leg: { shape: string }) => decodePolyline6(leg.shape));
         routeCoordsRef.current = coordinates;
+        cumDistRef.current = computeCumulativeDistances(coordinates);
+
+        // Only 2 waypoints are ever requested (from -> to), so there's
+        // always exactly one leg and shape indices line up directly with
+        // the coordinates array above.
+        const rawManeuvers = legs[0]?.maneuvers ?? [];
+        maneuversRef.current = rawManeuvers.map(
+          (m: { type: number; instruction: string; begin_shape_index: number }) => ({
+            type: m.type,
+            instruction: m.instruction,
+            atDistanceM: cumDistRef.current[m.begin_shape_index] ?? 0,
+          })
+        );
+        setCurrentManeuver(null);
 
         const source = mapRef.current?.getSource(ROUTE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
         source?.setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } });
@@ -313,6 +454,16 @@ export default function Map() {
       const heading = headingAlongRoute(lon, lat, routeCoordsRef.current) ?? lastFixRef.current?.bearing ?? 0;
       lastFixRef.current = { lon, lat, bearing: heading };
 
+      // Figure out which upcoming maneuver we're approaching and how far
+      // away it is, by converting our position into "distance traveled
+      // along the route" and comparing it to where each maneuver begins.
+      const nearestIdx = nearestIndexOnRoute(lon, lat, routeCoordsRef.current);
+      const traveled = cumDistRef.current[nearestIdx] ?? 0;
+      const next = maneuversRef.current.find((m) => m.atDistanceM > traveled + 3);
+      setCurrentManeuver(
+        next ? { type: next.type, instruction: next.instruction, remainingM: Math.max(0, next.atDistanceM - traveled) } : null
+      );
+
       if (!navMarkerRef.current) {
         navMarkerRef.current = new maplibregl.Marker({ element: createPuckElement(), anchor: "center" })
           .setLngLat([lon, lat])
@@ -348,6 +499,7 @@ export default function Map() {
       map.off("zoomstart", onUserInteract);
       navMarkerRef.current?.remove();
       navMarkerRef.current = null;
+      setCurrentManeuver(null);
       map.easeTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 500 });
     };
   }, [navigating]);
@@ -377,65 +529,68 @@ export default function Map() {
     );
   };
 
- const handleStartNavigation = async () => {
-  if (!to) return;
+  const handleStartNavigation = async () => {
+    if (!to) return;
 
-  if (!("geolocation" in navigator)) {
-    setRouteError("Geolocation is not supported by your browser.");
-    return;
-  }
+    if (!("geolocation" in navigator)) {
+      setRouteError("Geolocation is not supported by your browser.");
+      return;
+    }
 
-  // Helper to actually request the position
-  const requestGPS = () => {
-    setLocating(true);
-    setRouteError(null);
+    // Helper to actually request the position
+    const requestGPS = () => {
+      setLocating(true);
+      setRouteError(null);
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        fromMarkerRef.current?.remove();
-        fromMarkerRef.current = null;
-        setPicking(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setLocating(false);
+          fromMarkerRef.current?.remove();
+          fromMarkerRef.current = null;
+          setPicking(null);
 
-        setFrom({
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          label: "My Location",
-        });
-        setNavigating(true);
-      },
-      (err) => {
-        setLocating(false);
-        if (err.code === err.PERMISSION_DENIED) {
-          setRouteError("GPS access is turned off/denied. Please turn on location permissions to continue.");
-        } else {
-          setRouteError(err.message || "Waiting for location fix...");
-        }
-          },
-          { enableHighAccuracy: true, timeout: 10000 }
-        );
-      };
-      try {
-        const permission = await navigator.permissions?.query({ name: "geolocation" });
-        if (permission) {
-          permission.onchange = () => {
-            if (permission.state === "granted") {
-              requestGPS();
-            } else if (permission.state === "denied") {
-              setRouteError("GPS is blocked. Please enable location in your browser address bar.");
-            }
-          };
-        }
-        if (permission?.state === "denied") {
-          setRouteError("GPS access is blocked. Please enable location permissions in browser settings and tap 'Start Navigation' again.");
-          return;
-        }
-      } catch {
-      }
-      requestGPS();
+          setFrom({
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            label: "My Location",
+          });
+          setNavigating(true);
+        },
+        (err) => {
+          setLocating(false);
+          if (err.code === err.PERMISSION_DENIED) {
+            setRouteError("GPS access is turned off/denied. Please turn on location permissions to continue.");
+          } else {
+            setRouteError(err.message || "Waiting for location fix...");
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
     };
+    try {
+      const permission = await navigator.permissions?.query({ name: "geolocation" });
+      if (permission) {
+        permission.onchange = () => {
+          if (permission.state === "granted") {
+            requestGPS();
+          } else if (permission.state === "denied") {
+            setRouteError("GPS is blocked. Please enable location in your browser address bar.");
+          }
+        };
+      }
+      if (permission?.state === "denied") {
+        setRouteError("GPS access is blocked. Please enable location permissions in browser settings and tap 'Start Navigation' again.");
+        return;
+      }
+    } catch {
+    }
+    requestGPS();
+  };
 
-  const handleEndNavigation = () => setNavigating(false);
+  const handleEndNavigation = () => {
+    setNavigating(false);
+    setCurrentManeuver(null);
+  };
 
   const handleRecenter = () => {
     const map = mapRef.current;
@@ -459,6 +614,9 @@ export default function Map() {
     setNavigating(false);
     setRouteSummary(null);
     setRouteError(null);
+    setCurrentManeuver(null);
+    maneuversRef.current = [];
+    cumDistRef.current = [];
     fromMarkerRef.current?.remove();
     fromMarkerRef.current = null;
     toMarkerRef.current?.remove();
@@ -472,10 +630,20 @@ export default function Map() {
       <div className="absolute left-2 right-2 top-2 z-10 flex flex-col gap-2 rounded-lg bg-white/95 p-3 shadow-md backdrop-blur-sm sm:left-4 sm:right-auto sm:top-4 sm:w-80">
         {navigating ? (
           <div className="flex flex-col gap-2">
-            {routeSummary && (
-              <div className="rounded-md bg-blue-600 px-3 py-3 text-sm font-semibold text-white">
-                Navigating · {routeSummary.distanceKm.toFixed(1)} km · {Math.round(routeSummary.durationMin)} min
+            {currentManeuver ? (
+              <div className="flex items-center gap-3 rounded-md bg-blue-600 p-3 text-white">
+                <TurnIcon kind={getIconKind(currentManeuver.type)} className="h-9 w-9 flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-lg font-bold leading-tight">{formatDistance(currentManeuver.remainingM)}</div>
+                  <div className="truncate text-xs text-blue-100">{currentManeuver.instruction}</div>
+                </div>
               </div>
+            ) : (
+              routeSummary && (
+                <div className="rounded-md bg-blue-600 px-3 py-3 text-sm font-semibold text-white">
+                  Navigating · {routeSummary.distanceKm.toFixed(1)} km · {Math.round(routeSummary.durationMin)} min
+                </div>
+              )
             )}
             <button
               type="button"
