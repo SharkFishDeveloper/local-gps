@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { SearchResult, useLocationSearch } from "@/hooks/useLocationSearch";
+import { MapPin } from "lucide-react";
 
 type Props = {
   label: string;
@@ -49,13 +50,23 @@ export default function LocationSearchBox({
           type="button"
           onClick={onPickOnMap}
           title="Pick location on map"
-          className={`flex shrink-0 items-center justify-center rounded-md border px-3 text-sm transition-colors ${
+          className={`flex shrink-0 items-center justify-center rounded-md border px-3 transition-colors ${
             isPicking
               ? "border-blue-500 bg-blue-500 text-white"
-              : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+              : "border-gray-300 bg-white hover:bg-gray-50"
           }`}
         >
-          📍
+          <MapPin
+            className={`h-5 w-5 ${
+              isPicking
+                ? "text-white"
+                : label === "From"
+                ? "text-green-600"
+                : label === "To"
+                ? "text-red-600"
+                : "text-gray-600"
+            }`}
+          />
         </button>
       </div>
 
