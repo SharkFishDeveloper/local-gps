@@ -16,25 +16,25 @@ venv_python = venv_dir / "Scripts" / "python.exe"
 valhalla_build_config = venv_dir / "Scripts" / "valhalla_build_config.exe"
 
 # Create venv if it doesn't exist
-if not venv_python.exists():
-    subprocess.run(
-        ["python", "-m", "venv", str(venv_dir)],
-        cwd=ROOT,
-        check=True,
-    )
+# if not venv_python.exists():
+#     subprocess.run(
+#         ["python", "-m", "venv", str(venv_dir)],
+#         cwd=ROOT,
+#         check=True,
+#     )
 
 # Install dependencies only if valhalla_build_config is missing
 activate_cmd = r"call .venv\Scripts\activate.bat"
 
-subprocess.run(
-    [
-        "cmd",
-        "/c",
-        f"{activate_cmd} && python -m pip install -r requirements.txt",
-    ],
-    cwd=ROOT,
-    check=True,
-)
+# subprocess.run(
+#     [
+#         "cmd",
+#         "/c",
+#         f"{activate_cmd} && python -m pip install -r requirements.txt",
+#     ],
+#     cwd=ROOT,
+#     check=True,
+# )
 
 
 tile_dir = ROOT / "valhalla_tiles" / location

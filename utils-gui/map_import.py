@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from map_selector import change_map
+from tkinter import messagebox
 
 CREATE_NO_WINDOW = 0x08000000
 MAP_NAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -121,116 +122,116 @@ class MapImportMixin:
         out_mbtiles = tiles_dir / f"{map_name}.mbtiles"
 
         try:
-            # self._log_map(f"=== Starting import of '{map_name}' ===")
-            # self._set_progress(2, f"Preparing to import '{map_name}'...")
+            self._log_map(f"=== Starting import of '{map_name}' ===")
+            self._set_progress(2, f"Preparing to import '{map_name}'...")
 
-            # pbf_dir.mkdir(parents=True, exist_ok=True)
-            # tiles_dir.mkdir(parents=True, exist_ok=True)
+            pbf_dir.mkdir(parents=True, exist_ok=True)
+            tiles_dir.mkdir(parents=True, exist_ok=True)
 
-            # if dest_pbf.exists():
-            #     self._log_map(f"'{dest_pbf.name}' already exists in map-data-pbf, overwriting.")
+            if dest_pbf.exists():
+                self._log_map(f"'{dest_pbf.name}' already exists in map-data-pbf, overwriting.")
 
-            # self._log_map(f"Copying {src} -> {dest_pbf}")
-            # shutil.copy2(src, dest_pbf)
-            # self._log_map("Copy complete.")
-            # self._set_progress(10, "File copied. Starting Planetiler...")
+            self._log_map(f"Copying {src} -> {dest_pbf}")
+            shutil.copy2(src, dest_pbf)
+            self._log_map("Copy complete.")
+            self._set_progress(10, "File copied. Starting Planetiler...")
 
-            # planetiler_jar = base / "planetiler.jar"
-            # if not planetiler_jar.exists():
-            #     self._log_map(f"ERROR: planetiler.jar not found at {planetiler_jar}")
-            #     self._set_progress(0, "Failed: planetiler.jar not found.")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            planetiler_jar = base / "planetiler.jar"
+            if not planetiler_jar.exists():
+                self._log_map(f"ERROR: planetiler.jar not found at {planetiler_jar}")
+                self._set_progress(0, "Failed: planetiler.jar not found.")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
-            # heap_sizes = ["8g", "4g", "2g", "1g"]
-            # rc = None
-            # for i, heap in enumerate(heap_sizes):
-            #     planetiler_cmd = [
-            #         "java",
-            #         f"-Xmx{heap}",
-            #         "-jar",
-            #         str(planetiler_jar),
-            #         "--force",
-            #         "--download",
-            #         f"--osm-path={dest_pbf}",
-            #         f"--output={out_mbtiles}",
-            #     ]
-            #     self._log_map(f"Attempting Planetiler with -Xmx{heap} (attempt {i + 1}/{len(heap_sizes)})...")
-            #     self._set_progress(10, f"Running Planetiler ({heap} heap)...")
-            #     rc = self._stream_subprocess(planetiler_cmd, cwd=base)
+            heap_sizes = ["8g", "4g", "2g", "1g"]
+            rc = None
+            for i, heap in enumerate(heap_sizes):
+                planetiler_cmd = [
+                    "java",
+                    f"-Xmx{heap}",
+                    "-jar",
+                    str(planetiler_jar),
+                    "--force",
+                    "--download",
+                    f"--osm-path={dest_pbf}",
+                    f"--output={out_mbtiles}",
+                ]
+                self._log_map(f"Attempting Planetiler with -Xmx{heap} (attempt {i + 1}/{len(heap_sizes)})...")
+                self._set_progress(10, f"Running Planetiler ({heap} heap)...")
+                rc = self._stream_subprocess(planetiler_cmd, cwd=base)
 
-            #     if rc == 0:
-            #         self._log_map(f"Planetiler succeeded with -Xmx{heap}.")
-            #         break
+                if rc == 0:
+                    self._log_map(f"Planetiler succeeded with -Xmx{heap}.")
+                    break
 
-            #     self._log_map(f"Planetiler failed with -Xmx{heap} (exit code {rc}).")
-            #     if i < len(heap_sizes) - 1:
-            #         self._log_map(f"Retrying with a smaller heap ({heap_sizes[i + 1]})...")
+                self._log_map(f"Planetiler failed with -Xmx{heap} (exit code {rc}).")
+                if i < len(heap_sizes) - 1:
+                    self._log_map(f"Retrying with a smaller heap ({heap_sizes[i + 1]})...")
 
-            # if rc != 0:
-            #     self._log_map(f"ERROR: planetiler failed at every heap size tried ({', '.join(heap_sizes)}). Last exit code: {rc}")
-            #     self._set_progress(10, "Failed: Planetiler error (all heap sizes exhausted).")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            if rc != 0:
+                self._log_map(f"ERROR: planetiler failed at every heap size tried ({', '.join(heap_sizes)}). Last exit code: {rc}")
+                self._set_progress(10, "Failed: Planetiler error (all heap sizes exhausted).")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
-            # if not out_mbtiles.exists():
-            #     self._log_map("ERROR: expected mbtiles file was not created.")
-            #     self._set_progress(10, "Failed: mbtiles not created.")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            if not out_mbtiles.exists():
+                self._log_map("ERROR: expected mbtiles file was not created.")
+                self._set_progress(10, "Failed: mbtiles not created.")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
-            # self._log_map(f"mbtiles created: {out_mbtiles}")
-            # self._set_progress(35, "mbtiles created. Updating file paths...")
+            self._log_map(f"mbtiles created: {out_mbtiles}")
+            self._set_progress(35, "mbtiles created. Updating file paths...")
 
-            # # ---- Update file paths (index.ts, build-db.js, style.json, service_manager.py) ----
-            # self._log_map(f"Updating file paths for '{map_name}'...")
-            # try:
-            #     change_map(map_name)
-            #     self._log_map("File paths updated.")
-            # except Exception as e:
-            #     self._log_map(f"ERROR updating file paths: {e}")
-            #     self._set_progress(35, "Failed: could not update file paths.")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            # ---- Update file paths (index.ts, build-db.js, style.json, service_manager.py) ----
+            self._log_map(f"Updating file paths for '{map_name}'...")
+            try:
+                change_map(map_name)
+                self._log_map("File paths updated.")
+            except Exception as e:
+                self._log_map(f"ERROR updating file paths: {e}")
+                self._set_progress(35, "Failed: could not update file paths.")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
-            # self._set_progress(40, "Paths updated. Checking search-backend...")
+            self._set_progress(40, "Paths updated. Checking search-backend...")
 
-            # # ---- search-backend: npm install (skip if already installed) ----
-            # search_backend_dir = base / "search-backend"
-            # if not search_backend_dir.exists():
-            #     self._log_map(f"ERROR: {search_backend_dir} not found.")
-            #     self._set_progress(40, "Failed: search-backend not found.")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            # ---- search-backend: npm install (skip if already installed) ----
+            search_backend_dir = base / "search-backend"
+            if not search_backend_dir.exists():
+                self._log_map(f"ERROR: {search_backend_dir} not found.")
+                self._set_progress(40, "Failed: search-backend not found.")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
-            # npm = "npm.cmd" if os.name == "nt" else "npm"
-            # node_modules = search_backend_dir / "node_modules"
+            npm = "npm.cmd" if os.name == "nt" else "npm"
+            node_modules = search_backend_dir / "node_modules"
 
-            # if node_modules.exists():
-            #     self._log_map("node_modules already present, skipping npm install.")
-            #     self._set_progress(55, "Dependencies already installed.")
-            # else:
-            #     self._log_map("Running npm install in search-backend...")
-            #     self._set_progress(45, "Running npm install...")
-            #     rc = self._stream_subprocess([npm, "install"], cwd=search_backend_dir)
-            #     if rc != 0:
-            #         self._log_map(f"ERROR: npm install exited with code {rc}")
-            #         self._set_progress(45, "Failed: npm install error.")
-            #         self._finish_map_import_threadsafe(False, map_name)
-            #         return
-            #     self._log_map("npm install complete.")
-            #     self._set_progress(55, "npm install complete.")
+            if node_modules.exists():
+                self._log_map("node_modules already present, skipping npm install.")
+                self._set_progress(55, "Dependencies already installed.")
+            else:
+                self._log_map("Running npm install in search-backend...")
+                self._set_progress(45, "Running npm install...")
+                rc = self._stream_subprocess([npm, "install"], cwd=search_backend_dir)
+                if rc != 0:
+                    self._log_map(f"ERROR: npm install exited with code {rc}")
+                    self._set_progress(45, "Failed: npm install error.")
+                    self._finish_map_import_threadsafe(False, map_name)
+                    return
+                self._log_map("npm install complete.")
+                self._set_progress(55, "npm install complete.")
 
-            # # ---- search-backend: npm run build --name <map_name> ----
-            # self._log_map(f"Building search database for '{map_name}'...")
-            # self._set_progress(60, "Building search database...")
-            # build_cmd = [npm, "run", "build", "--name", map_name]
-            # rc = self._stream_subprocess(build_cmd, cwd=search_backend_dir)
-            # if rc != 0:
-            #     self._log_map(f"ERROR: npm run build exited with code {rc}")
-            #     self._set_progress(60, "Failed: search database build error.")
-            #     self._finish_map_import_threadsafe(False, map_name)
-            #     return
+            # ---- search-backend: npm run build --name <map_name> ----
+            self._log_map(f"Building search database for '{map_name}'...")
+            self._set_progress(60, "Building search database...")
+            build_cmd = [npm, "run", "build", "--name", map_name]
+            rc = self._stream_subprocess(build_cmd, cwd=search_backend_dir)
+            if rc != 0:
+                self._log_map(f"ERROR: npm run build exited with code {rc}")
+                self._set_progress(60, "Failed: search database build error.")
+                self._finish_map_import_threadsafe(False, map_name)
+                return
 
             self._set_progress(75, "Search database built. Starting Valhalla...")
             # ------------------------------------------------------------------
@@ -244,12 +245,12 @@ class MapImportMixin:
             venv_dir = valhalla_dir / ".venv"
             venv_python = venv_dir / "Scripts" / "python.exe"
 
-            # Create virtual environment if it doesn't exist
             if not venv_python.exists():
                 self._log_map("Creating Valhalla virtual environment...")
+
                 rc = self._stream_subprocess(
                     [
-                        sys.executable,
+                        "python",
                         "-m",
                         "venv",
                         str(venv_dir),
@@ -258,6 +259,24 @@ class MapImportMixin:
                 )
                 if rc != 0:
                     raise RuntimeError("Failed to create Valhalla virtual environment.")
+
+                self._log_map("Installing Valhalla dependencies...")
+
+                rc = self._stream_subprocess(
+                    [
+                        str(venv_python),
+                        "-m",
+                        "pip",
+                        "install",
+                        "-r",
+                        "requirements.txt",
+                    ],
+                    cwd=valhalla_dir,
+                )
+                if rc != 0:
+                    raise RuntimeError("Failed to install Valhalla dependencies.")
+
+            self._log_map("Running Valhalla initialization...")
 
             rc = self._stream_subprocess(
                 [
@@ -274,6 +293,8 @@ class MapImportMixin:
                 self._finish_map_import_threadsafe(False, map_name)
                 return
 
+            
+
             self._log_map("Valhalla routing data generated successfully.")
 
             self._log_map(
@@ -282,6 +303,19 @@ class MapImportMixin:
 
             self._set_progress(100, f"Map '{map_name}' ready.")
             self._finish_map_import_threadsafe(True, map_name)
+            def close_app():
+                messagebox.showinfo(
+                    "Restart Required",
+                    "Valhalla has been set up successfully.\n\nPlease restart the application."
+                )
+                self.root.destroy()
+
+            # Show the dialog after 2 seconds
+            self.root.after(2000, close_app)
+
+            return
+            
+            
 
         except Exception as e:
             self._log_map(f"ERROR: {e}")
