@@ -196,7 +196,7 @@ def port_is_open(host, port, timeout=0.2):
     except OSError:
         return False
 
-
+# main class
 class ServiceManagerGUI(MapImportMixin):
     def __init__(self, root):
         self.root = root
